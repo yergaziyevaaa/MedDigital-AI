@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from starlette.middleware.sessions import SessionMiddleware
 from html import escape
+from course_bank import MODULES, TRANSLATIONS
 
 BASE=Path(__file__).parent
 DB=Path(os.getenv('DATABASE_PATH',str(BASE/'meddigital.db')))
@@ -31,6 +32,7 @@ def verify(p, stored):
 def init():
  with conn() as c:
   c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT, group_name TEXT)')
+  c.execute('CREATE TABLE IF NOT EXISTS course_results (id INTEGER PRIMARY KEY, user_id INTEGER, module TEXT, score INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)')
   c.execute('CREATE TABLE IF NOT EXISTS results (id INTEGER PRIMARY KEY, user_id INTEGER, score INTEGER, feedback TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)')
   if not c.execute('SELECT id FROM users WHERE role="teacher"').fetchone() and os.getenv('TEACHER_PASSWORD') and len(os.getenv('TEACHER_PASSWORD',''))>=12:
    c.execute('INSERT INTO users(username,password,role,group_name) VALUES(?,?,?,?)',(os.getenv('TEACHER_USERNAME','teacher'),hash_pw(os.environ['TEACHER_PASSWORD']),'teacher',''))
@@ -92,13 +94,15 @@ def student_content(u,lang):
  t=STR[lang]
  with conn() as c:rows=c.execute('SELECT score,feedback,created_at FROM results WHERE user_id=? ORDER BY id DESC LIMIT 10',(u['id'],)).fetchall()
  history=''.join(f'<tr><td>{escape(r["created_at"])}</td><td>{r["score"]}/100</td><td>{escape(r["feedback"])}</td></tr>' for r in rows) or '<tr><td colspan="3">—</td></tr>'
- return f'''<section class="card"><h2>{t['student']}: {escape(u['username'])}</h2><p>{t['group']}: <span class="badge">{escape(u['group'])}</span></p><p>{t['welcome']}</p></section><section class="card"><h2>🏥 {t['patient']}</h2><p class="note">{t['hint']}</p><p><b>Ситуация:</b> учебный пациент P-104, дата рождения 12.04.2004. Заполните карту без персональных данных реальных людей.</p><form action="/check" method="post"><label>{t['id']}<input name="patient_id" placeholder="P-104" required maxlength="20"></label><label>{t['date']}<input name="dob" placeholder="12.04.2004" required maxlength="20"></label><label>{t['privacy']}<select name="privacy"><option value="no">{t['no']}</option><option value="yes">{t['yes']}</option></select></label><button>{t['submit']}</button></form></section><div class="grid"><section class="card"><h3>🔐 {'Құпиялылық' if lang=='kk' else 'Защита данных'}</h3><p>{'Оқу жағдайларын талдаңыз' if lang=='kk' else 'Решите задачи о конфиденциальности'}</p><a href="/lesson/privacy">{'Бастау' if lang=='kk' else 'Начать'} →</a></section><section class="card"><h3>📊 Excel</h3><p>{'Орташа мәндерді есептеңіз' if lang=='kk' else 'Рассчитайте средние значения'}</p><a href="/lesson/excel">{'Бастау' if lang=='kk' else 'Начать'} →</a></section><section class="card"><h3>🤖 AI-наставник</h3><p>{'Оқу сұрағын қойыңыз' if lang=='kk' else 'Задайте учебный вопрос'}</p><a href="/mentor">{'Ашу' if lang=='kk' else 'Открыть'} →</a></section></div><section class="card"><h2>📈 {t['progress']}</h2><table><tr><th>Дата</th><th>{t['score']}</th><th>{t['feedback']}</th></tr>{history}</table></section>'''
+ return f'''<section class="card"><h2>{t['student']}: {escape(u['username'])}</h2><p>{t['group']}: <span class="badge">{escape(u['group'])}</span></p><p>{t['welcome']}</p></section><section class="card"><h2>🏥 {t['patient']}</h2><p class="note">{t['hint']}</p><p><b>Ситуация:</b> учебный пациент P-104, дата рождения 12.04.2004. Заполните карту без персональных данных реальных людей.</p><form action="/check" method="post"><label>{t['id']}<input name="patient_id" placeholder="P-104" required maxlength="20"></label><label>{t['date']}<input name="dob" placeholder="12.04.2004" required maxlength="20"></label><label>{t['privacy']}<select name="privacy"><option value="no">{t['no']}</option><option value="yes">{t['yes']}</option></select></label><button>{t['submit']}</button></form></section><div class="grid"><section class="card"><h3>🔐 {'Құпиялылық' if lang=='kk' else 'Защита данных'}</h3><p>{'Оқу жағдайларын талдаңыз' if lang=='kk' else 'Решите задачи о конфиденциальности'}</p><a href="/lesson/privacy">{'Бастау' if lang=='kk' else 'Начать'} →</a></section><section class="card"><h3>📊 Excel</h3><p>{'Орташа мәндерді есептеңіз' if lang=='kk' else 'Рассчитайте средние значения'}</p><a href="/lesson/excel">{'Бастау' if lang=='kk' else 'Начать'} →</a></section><section class="card"><h3>📚 {'Сабақтар мен тесттер' if lang=='kk' else 'Уроки и тесты'}</h3><p>15 модулей · 67 вопросов</p><a href="/courses">{'Ашу' if lang=='kk' else 'Открыть'} →</a></section></div><section class="card"><h2>📈 {t['progress']}</h2><table><tr><th>Дата</th><th>{t['score']}</th><th>{t['feedback']}</th></tr>{history}</table></section>'''
 
 def teacher_content(lang):
  t=STR[lang]
  with conn() as c: rows=c.execute('SELECT u.username,u.group_name,COUNT(r.id) attempts,MAX(r.score) best FROM users u LEFT JOIN results r ON r.user_id=u.id WHERE u.role="student" GROUP BY u.id ORDER BY u.username').fetchall()
  body=''.join(f'<tr><td>{escape(r["username"])}</td><td>{escape(r["group_name"])}</td><td>{r["attempts"]}</td><td>{r["best"] if r["best"] is not None else "—"}</td></tr>' for r in rows)
- return f'<section class="card"><h2>👩‍🏫 {t["teacher"]}</h2><p>{t["welcome"]}</p><table><tr><th>Студент</th><th>{t["group"]}</th><th>Попытки</th><th>Лучший результат</th></tr>{body}</table><p><a href="/export">⬇ CSV</a></p><h3>Добавить студента</h3><form method="post" action="/students"><label>Логин<input name="username" required pattern="[A-Za-z0-9_-]{3,32}"></label><label>Группа<input name="group_name" required maxlength="60"></label><label>Пароль (12+ символов)<input type="password" name="password" required minlength="12"></label><button>Создать</button></form></section>'
+ with conn() as c: course_rows=c.execute('SELECT u.username,r.module,COUNT(*) attempts,MAX(r.score) best FROM course_results r JOIN users u ON u.id=r.user_id GROUP BY u.id,r.module ORDER BY u.username,r.module').fetchall()
+ course_table=''.join(f'<tr><td>{escape(r["username"])}</td><td>{escape(r["module"])}</td><td>{r["attempts"]}</td><td>{r["best"]}/100</td></tr>' for r in course_rows) or '<tr><td colspan="4">—</td></tr>' 
+ return f'<section class="card"><h2>👩‍🏫 {t["teacher"]}</h2><p>{t["welcome"]}</p><table><tr><th>Студент</th><th>{t["group"]}</th><th>Попытки</th><th>Лучший результат</th></tr>{body}</table><p><a href="/export">⬇ CSV</a> · <a href="/export-courses">⬇ CSV (тесты)</a> · <a href="/courses">📚 Курсы</a></p><h3>📚 Результаты новых тестов</h3><table><tr><th>Студент</th><th>Модуль</th><th>Попытки</th><th>Лучший результат</th></tr>{course_table}</table><h3>Добавить студента</h3><form method="post" action="/students"><label>Логин<input name="username" required pattern="[A-Za-z0-9_-]{3,32}"></label><label>Группа<input name="group_name" required maxlength="60"></label><label>Пароль (12+ символов)<input type="password" name="password" required minlength="12"></label><button>Создать</button></form></section>'
 
 @app.post('/check')
 def check(request:Request,patient_id:str=Form(...),dob:str=Form(...),privacy:str=Form(...),csrf:str=Form("")):
@@ -171,31 +175,58 @@ def grade_lesson(request:Request,kind:str,a0:str=Form(...),a1:str=Form(...),a2:s
  with conn() as c:c.execute('INSERT INTO results(user_id,score,feedback) VALUES(?,?,?)',(u['id'],score,kind+': '+feedback))
  return page(request,f'<section class="card"><h2>{STR[lang]["feedback"]}</h2><h1>{score}/100</h1><p>{escape(feedback)}</p><a href="/">←</a></section>',lang)
 
-@app.get('/mentor')
-def mentor(request:Request):
- u=request.session.get('user')
- if not u or u['role']!='student':return RedirectResponse('/',303)
- lang=language(request)
- label='Спросите об Excel, защите данных или цифровой карте пациента' if lang=='ru' else 'Excel, деректерді қорғау немесе электрондық карта туралы сұраңыз'
- return page(request,f'<section class="card"><h2>🤖 AI-наставник</h2><p>{label}</p><form method="post" action="/mentor">{csrf_field(request)}<textarea name="question" rows="4" maxlength="500" required></textarea><button>{STR[lang]["submit"]}</button></form><p class="note">{("Без API-ключа наставник даёт только стандартные подсказки." if lang=="ru" else "API кілтінсіз тек стандартты кеңестер беріледі.")}</p></section>',lang)
 
-@app.post('/mentor')
-def mentor_answer(request:Request,question:str=Form(...),csrf:str=Form('')):
+@app.get('/courses')
+def courses(request:Request):
  u=request.session.get('user')
- if not u or u['role']!='student':return RedirectResponse('/',303)
+ if not u:return RedirectResponse('/',303)
  lang=language(request)
- if not csrf_valid(request,csrf):return page(request,'Сессия устарела',lang)
- question=question.strip()[:500]
- if not question:return RedirectResponse('/mentor',303)
- key=os.getenv('OPENAI_API_KEY','')
- answer=''
- if key:
-  try:
-   payload=json.dumps({'model':os.getenv('OPENAI_MODEL','gpt-4.1-mini'),'messages':[{'role':'system','content':'You are a bilingual Russian/Kazakh educational tutor for first-year nursing students learning digital literacy. Explain informatics, spreadsheets, privacy and fictional patient-record exercises. Do not diagnose or give medical treatment. Never ask for real patient data. Keep answers concise, safe and in the language of the question.'},{'role':'user','content':question}],'max_tokens':350}).encode()
-   req=HttpRequest('https://api.openai.com/v1/chat/completions',data=payload,headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'},method='POST')
-   with urlopen(req,timeout=12) as response:answer=json.load(response)['choices'][0]['message']['content']
-  except Exception:answer=''
- if not answer:
-  answer=('Для Excel используйте формулы AVERAGE, MAX и проверяйте типы данных. Никогда не отправляйте настоящие данные пациентов в учебный сервис.' if lang=='ru' else 'Excel-де AVERAGE, MAX формулаларын қолданыңыз. Нақты пациент деректерін оқу жүйесіне енгізбеңіз.')
-  answer+=(' (Стандартная подсказка: ИИ сейчас недоступен.)' if lang=='ru' else ' (Стандартты кеңес: ЖИ қазір қолжетімсіз.)')
- return page(request,f'<section class="card"><h2>🤖 AI-наставник</h2><p><b>{escape(question)}</b></p><p>{escape(answer)}</p><a href="/mentor">←</a></section>',lang)
+ with conn() as c: rows=c.execute('SELECT module,MAX(score) best FROM course_results WHERE user_id=? GROUP BY module',(u['id'],)).fetchall()
+ progress={r['module']:r['best'] for r in rows}
+ cards=''
+ for slug,(ru,kk,theory_ru,theory_kk,qs) in MODULES.items():
+  title=kk if lang=='kk' else ru
+  result=str(progress[slug])+'/100' if slug in progress else ('Өтпеген' if lang=='kk' else 'Не пройден')
+  cards+=f'<section class="card"><h3>{escape(title)}</h3><p>{len(qs)} '+('сұрақ' if lang=='kk' else 'вопроса')+f'</p><p class="note">{result}</p><a href="/courses/{slug}">'+('Оқу' if lang=='kk' else 'Изучить')+' →</a></section>'
+ return page(request,'<section class="card"><h2>📚 '+('Сабақтар мен тесттер' if lang=='kk' else 'Уроки и тесты')+'</h2><p>'+str(len(MODULES))+' модулей · '+str(sum(len(m[4]) for m in MODULES.values()))+' вопросов · без платного ИИ</p></section><div class="grid">'+cards+'</div><a href="/">←</a>',lang)
+
+@app.get('/courses/{slug}')
+def course(request:Request,slug:str):
+ u=request.session.get('user')
+ if not u:return RedirectResponse('/',303)
+ if slug not in MODULES:return RedirectResponse('/courses',303)
+ lang=language(request);ru,kk,tr,tk,qs=MODULES[slug]
+ content=f'<section class="card"><h2>{escape(kk if lang=="kk" else ru)}</h2><p>{escape(tk if lang=="kk" else tr)}</p></section><section class="card"><form method="post" action="/courses/{slug}">'+csrf_field(request)
+ for i,(question,options,answer) in enumerate(qs):
+  if lang=='kk' and slug in TRANSLATIONS: question,options=TRANSLATIONS[slug][i]
+  content+=f'<fieldset style="border:1px solid #dce7eb;border-radius:10px;margin:15px 0;padding:15px"><legend><b>{i+1}. {escape(question)}</b></legend>'
+  for j,opt in enumerate(options):content+=f'<label style="display:block;padding:7px"><input type="radio" name="q{i}" value="{j}" style="width:auto;display:inline;margin:0 8px" required>{escape(opt)}</label>'
+  content+='</fieldset>'
+ content+='<button>'+('Тексеру' if lang=='kk' else 'Проверить')+'</button></form></section><a href="/courses">←</a>'
+ return page(request,content,lang)
+
+@app.post('/courses/{slug}')
+async def grade_course(request:Request,slug:str):
+ u=request.session.get('user')
+ if not u:return RedirectResponse('/',303)
+ if slug not in MODULES:return RedirectResponse('/courses',303)
+ form=await request.form()
+ if not csrf_valid(request,str(form.get('csrf',''))):return page(request,'Сессия устарела',language(request))
+ qs=MODULES[slug][4]; correct=0; details=''
+ for i,(question,options,answer) in enumerate(qs):
+  if language(request)=='kk' and slug in TRANSLATIONS:question,options=TRANSLATIONS[slug][i]
+  value=str(form.get('q'+str(i),''))
+  ok=value==str(answer);correct+=int(ok)
+  details+=f'<p>{i+1}. {"✓" if ok else "✗"} {escape(question)}<br><b>'+('Дұрыс жауап: ' if language(request)=='kk' else 'Правильный ответ: ')+escape(options[answer])+'</b></p>'
+ score=round(100*correct/len(qs))
+ with conn() as c:c.execute('INSERT INTO course_results(user_id,module,score) VALUES(?,?,?)',(u['id'],slug,score))
+ return page(request,f'<section class="card"><h2>{score}/100</h2><p>{correct} / {len(qs)}</p>{details}<a href="/courses">← '+('Курстар' if language(request)=='kk' else 'К урокам')+'</a></section>',language(request))
+
+@app.get('/export-courses')
+def export_courses(request:Request):
+ u=request.session.get('user')
+ if not u or u['role']!='teacher':return RedirectResponse('/',303)
+ with conn() as c:rows=c.execute('SELECT u.username,u.group_name,r.module,r.score,r.created_at FROM course_results r JOIN users u ON u.id=r.user_id ORDER BY r.id DESC').fetchall()
+ output=io.StringIO();writer=csv.writer(output);writer.writerow(['student','group','module','score','date'])
+ for r in rows:writer.writerow([r[k] for k in ('username','group_name','module','score','created_at')])
+ return StreamingResponse(iter(['\ufeff'+output.getvalue()]),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="meddigital-courses.csv"'})
